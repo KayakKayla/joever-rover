@@ -2,8 +2,8 @@
 # source ~/.venv/bin/activate
 
 import time
+import traceback
 import sys, tty, termios, time
-import os
 from gpiozero import Robot
 from pygame import mixer 
 import RPi.GPIO as GPIO
@@ -27,8 +27,8 @@ import numpy as np
 mixer.init() 
   
 # Loading the song 
-mixer.music.load("ngtgyu.ogg")
-mixer.music.load("NGU.ogg")
+# mixer.music.load("ngtgyu.ogg")
+mixer.music.load("pokemon.ogg")
   
 # Setting the volume 
 mixer.music.set_volume(0.7) 
@@ -57,7 +57,7 @@ GPIO.setup(dp4, GPIO.IN)
 
 millis_last = 0
 millis_elapsed = 0
-SAMPLE_TIME = 4.0
+SAMPLE_TIME = 2.0
 threshold = 100
 def get_angle(running_total):
     x_comp = 0
@@ -102,7 +102,7 @@ def findDir(sample, last_time):
     print(running_total)
     
 
-    if (max(200, value[ans]) == 200):
+    if (max(500, value[ans]) == 500):
         return -1
     print(get_angle(running_total))
     return get_angle(running_total)
@@ -136,11 +136,11 @@ def check_faces(camera, face_haar, emotion_model):
         # find max indexed array
         max_index = np.argmax(predictions[0])
         emotions = ('angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise')
-        if emotions[max_index] != happy:
+        if emotions[max_index] != 'happy':
             confidence.append(predictions[0][max_index])
         else:
             confidence.append(-1)
-        cv2.imshow('frame',test_img)
+        # cv2.imshow('frame',test_img)
     saddest_person_index = np.argmax(confidence)
     if confidence[saddest_person_index] != 0:
         return faces_detected[saddest_person_index]
@@ -160,28 +160,57 @@ def person_within_distance(threshold=2000):
     return (cur_dist <= threshold)
 
 
+
+def no_person_found(timeout):
+    print("trying to find person")
+    starting_time = time.time()
+    slow_speed = 0.4
+    robot.right(slow_speed)
+    while check_faces(cap, face_haar_cascade, model)[0] == -1:
+        if time.time() - starting_time > timeout:
+            return False
+    robot.stop()
+    return True
+
 # driving function
 def align(w_cam):
     center_cam = w_cam/2
-    threshold = 50
+    camera_threshold = 100
+    no_PF_counter = 0
+    slow_speed = 0.5
+    timeout = 5 # seconds
     while True:
         results = check_faces(cap, face_haar_cascade, model)
         x_face = results[0]
         w_face = results[2]
         center_face = x_face + w_face/2
         if x_face == -1:
-            print("No person detected")
-            continue
+            robot.forward(slow_speed)
+            no_PF_counter += 1
+            if no_PF_counter > 75:
+                no_PF_counter = 0
+                found = no_person_found(timeout)
+                if not found:
+                    mixer.music.load("sad.ogg") #find sound
+                    mixer.music.play()
+                    align(w_cam)
+            else:
+                print("No person detected")
+                continue
+        robot.stop()
         distance =  center_cam - center_face
-        print("Distance of face from camera")
-        if math.fabs(distance) < threshold:
+        print(f"Distance of face from camera: {distance}")
+        if math.fabs(distance) < camera_threshold:
             print("Person is aligned with camera")
-            robot.stop()
-            return
+            if camera_threshold < 40:
+                robot.stop()
+                return
+            else:
+                camera_threshold -= 20
         if distance > 0:
-            robot.left(speed)
+            robot.left(0.4)
         elif distance < 0:
-            robot.right(speed)
+            robot.right(0.4)
 
 # turn to the angle given
 def turn(angle):
@@ -220,7 +249,8 @@ def getch():
 seen = False
 ran = False
 # 2.5 seconds per revolutions
-# setting up which input controls which direction 
+# setting up which input controls which direction
+ 
 try:
     while True:
         char = getch()
@@ -237,14 +267,28 @@ try:
         
         # Sound buttons
         if(char == "p"):
+            # print("Enter name of sound file")
+            # name = input()
+            mixer.music.load("pokemon.ogg")
             mixer.music.play()
 
         # Microphone button (L for listen)
         if(char == "l"):
-            print(findDir(SAMPLE_TIME, time.time()))
+            angle_test = findDir(SAMPLE_TIME, time.time())
+            print(angle_test)
+            turn(angle_test)
+            mixer.music.load("helloSW.ogg")
+            mixer.music.play()
         
         if(char == "t"):
             print(person_within_distance())
+            detecting = False
+            while detecting == False:
+                detecting = person_within_distance(500)
+                robot.forward(speed)
+                if detecting == True:
+                    robot.stop()
+                    break
         
         if(char == "u"):
             ran = False
@@ -253,6 +297,7 @@ try:
         # autonomous code
         if(char == "o" and ran == False):
             ran = True
+            print("Autonomous code running")
             angle = findDir(SAMPLE_TIME, time.time())
             while angle == -1:
                 angle = findDir(SAMPLE_TIME, time.time())
@@ -277,17 +322,18 @@ try:
             # # move function
             align(camera_width)
 
-            # detecting = False
-            # while detecting == False:
-            #     detecting = person_within_distance()
-            #     robot.forward(speed)
-            #     if detecting == True:
-            #         break
+            detecting = False
+            while detecting == False:
+                detecting = person_within_distance()
+                robot.forward(speed)
+                if detecting == True:
+                    robot.stop()
+                    break
             
             # if detecting == True:
             #     robot.stop()
-
-            #     mixer.music.play()
+            mixer.music.load("rick.ogg")
+            mixer.music.play()
             
             
 
@@ -297,13 +343,15 @@ try:
             robot.stop()
             mixer.music.stop() 
             cap.release()
-            cv2.destroyAllWindows()
+            # cv2.destroyAllWindows()
             quit()
 
-except KeyboardInterrupt:
+except Exception as error:
+    print(f'An error occurred: {error}')
+    print(traceback.format_exc())
     robot.stop()
     mixer.music.stop() 
     cap.release()
-    cv2.destroyAllWindows()
+    # cv2.destroyAllWindows()
     quit()
  
